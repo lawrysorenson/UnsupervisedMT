@@ -12,6 +12,7 @@ Original file is located at
 # pip install transformers
 
 import sys
+from unittest.util import _MAX_LENGTH
 import torch
 from transformers import EncoderDecoderModel, BertTokenizer
 import os
@@ -50,9 +51,8 @@ class TextDataset(Dataset):
     self.data = []
     for file in files:
       lang = '['+file[-5:-3].upper()+']'
-      print(lang)
       with open(file, 'r') as f:
-          self.data.extend([(l.strip(), lang) for l in f.readlines() if len(l) < 200])
+          self.data.extend([(l.strip(), lang) for l in f.readlines() if len(l) < 1000])
 
   def __getitem__(self, i):
     return self.data[i]
@@ -64,7 +64,7 @@ train_dataset_eng = TextDataset(files)
 
 train_dataset_loader = DataLoader(train_dataset_eng, batch_size=8, pin_memory=True, shuffle=True)
 
-tokenizer = Tokenizer(BPE(unk_token="[UNK]", cls_token="[CLS]", sep_token="[SEP]", pad_token="[PAD]", mask_token="[MASK]"))
+tokenizer = Tokenizer(BPE())
 
 
 trainer = BpeTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "[EN]", "[FA]"])
@@ -74,14 +74,15 @@ tokenizer.pre_tokenizer = Whitespace()
 tokenizer.train(files, trainer)
 
 tokenizer.post_processor = TemplateProcessing(
-    single="$A [SEP]",
+    single="$A [CLS]",
     special_tokens=[
         #("[CLS]", tokenizer.token_to_id("[CLS]")),
-        ("[SEP]", tokenizer.token_to_id("[SEP]")),
+        ("[CLS]", tokenizer.token_to_id("[CLS]")),
     ],
 )
 
-print('ADDED POST')
+langs = ['[EN]', '[FA]']
+l2ind = { s:i for i, s in enumerate(langs) }
 
 def scope():
   gc.collect()
@@ -140,7 +141,7 @@ def scope():
   for epoch in range(10):
     batch = 0
     loop = tqdm(total=len(train_dataset_loader))
-    for sent in train_dataset_loader: # TODO: deal with batching
+    for sent in train_dataset_loader:
       batch += 1
       #print('BATCH', batch)
   
@@ -162,8 +163,8 @@ def scope():
       if batch % 4 == 0:
         if batch % 24 == 0:
           loop.set_description('{:.3f}'.format(loss.item()))
-        if batch % 1000 == 0:
-          generated = model.generate(input_enc[0].unsqueeze(0))
+        if batch % 200 == 0:
+          generated = model.generate(input_enc[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(sent[1][0]))
           print(sent[0][0])
           print(generated[0].cpu().numpy())
           print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
