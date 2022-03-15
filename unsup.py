@@ -30,10 +30,11 @@ import pdb
 import gc
 import copy
 from transformers import BartForConditionalGeneration, BartConfig
+import random
 
 from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
+from tokenizers.models import BPE, WordPiece
+from tokenizers.trainers import BpeTrainer, WordPieceTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from transformers import BartTokenizer
@@ -64,10 +65,9 @@ train_dataset_eng = TextDataset(files)
 
 train_dataset_loader = DataLoader(train_dataset_eng, batch_size=8, pin_memory=True, shuffle=True)
 
-tokenizer = Tokenizer(BPE())
+tokenizer = Tokenizer(WordPiece())
 
-
-trainer = BpeTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "[EN]", "[FA]"])
+trainer = WordPieceTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "[EN]", "[FA]"])
 
 tokenizer.pre_tokenizer = Whitespace()
 
@@ -116,15 +116,36 @@ def scope():
   model = BartForConditionalGeneration(configuration)
   model.cuda()
 
-  objective = nn.CrossEntropyLoss(ignore_index = 3) #(tokenizer.pad_token_id)
+  objective = nn.CrossEntropyLoss(ignore_index = tokenizer.token_to_id("[PAD]"))
   optimizer = optim.Adam(model.parameters(), lr=3e-4)
 
-  def prep_batch(sents):
+  def noise(s):
+    copy = list(s)
+    l = len(copy)
+    sel = int(random.random() * l)
+    delete = random.sample(range(l), sel // 20)
+
+    for d in delete:
+      del copy[d]
+    copy = ''.join(copy)
+    
+    answer = tokenizer.encode(copy).ids
+
+    l = len(answer)
+    sel = int(random.random() * l)
+    delete = random.sample(range(l), sel // 20)
+
+    for d in delete:
+      answer[d] = tokenizer.token_to_id("[MASK]")
+
+    return answer
+
+  def prep_auto_batch(sents):
     ss = []
     ts = []
     for s, k in zip(*sents):
-      source = tokenizer.encode(s).ids
-      targ = [tokenizer.token_to_id(k)] + source[:-1]
+      source = noise(s)
+      targ = [tokenizer.token_to_id(k)] + tokenizer.encode(s).ids[:-1]
       ss.append(source)
       ts.append(targ)
     
@@ -145,7 +166,7 @@ def scope():
       batch += 1
       #print('BATCH', batch)
   
-      input_enc, input_dec = prep_batch(sent)
+      input_enc, input_dec = prep_auto_batch(sent)
   
       input_enc = torch.tensor(input_enc)
       input_dec = torch.tensor(input_dec)
