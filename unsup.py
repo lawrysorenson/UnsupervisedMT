@@ -7,9 +7,8 @@ Original file is located at
     https://colab.research.google.com/drive/1Ftr030cpKz87Lhc2HKo3KtB43o66NIi9
 """
 
-# Commented out IPython magic to ensure Python compatibility.
-# %%bash
-# pip install transformers
+grad_accum = 4
+batch_size = 8
 
 import sys
 from unittest.util import _MAX_LENGTH
@@ -29,7 +28,7 @@ from torch.nn.parameter import Parameter
 import pdb
 import gc
 import copy
-from transformers import BartForConditionalGeneration, BartConfig
+from transformers import BartForConditionalGeneration, BartForSequenceClassification, BartConfig
 import random
 
 from tokenizers import Tokenizer
@@ -38,6 +37,9 @@ from tokenizers.trainers import BpeTrainer, WordPieceTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from transformers import BartTokenizer
+
+
+from util import BartClassificationHead, BartEncoderLayer
 
 
 #from google.colab import drive
@@ -63,7 +65,7 @@ class TextDataset(Dataset):
 
 train_dataset_eng = TextDataset(files)
 
-train_dataset_loader = DataLoader(train_dataset_eng, batch_size=8, pin_memory=True, shuffle=True)
+train_dataset_loader = DataLoader(train_dataset_eng, batch_size=batch_size, pin_memory=True, shuffle=True)
 
 tokenizer = Tokenizer(WordPiece())
 
@@ -84,116 +86,170 @@ tokenizer.post_processor = TemplateProcessing(
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
 
-def scope():
-  gc.collect()
+def noise(s):
+  copy = list(s)
+  l = len(copy)
+  sel = int(random.random() * l)
+  delete = random.sample(range(l), sel // 20)
 
-  configuration = BartConfig( vocab_size = tokenizer.get_vocab_size(),
-                              max_position_embeddings = 512,
-                              encoder_layers = 6,
-                              encoder_ffn_dim = 2048,
-                              encoder_attention_heads = 8,
-                              decoder_layers = 6,
-                              decoder_ffn_dim = 2048,
-                              decoder_attention_heads = 8,
-                              encoder_layerdrop = 0.0,
-                              decoder_layerdrop = 0.0,
-                              activation_function = 'swish',
-                              d_model = 512,
-                              dropout = 0.1,
-                              attention_dropout = 0.0,
-                              activation_dropout = 0.0,
-                              init_std = 0.02,
-                              classifier_dropout = 0.0,
-                              scale_embedding = True,
-                              pad_token_id = tokenizer.token_to_id("[PAD]"),
-                              bos_token_id = 0,
-                              eos_token_id = tokenizer.token_to_id("[CLS]"),
-                              is_encoder_decoder = True,
-                              decoder_start_token_id = tokenizer.token_to_id("[EN]"),
-                              forced_eos_token_id = tokenizer.token_to_id("[CLS]") )
+  for d in sorted(delete, key=lambda x: -x):
+    del copy[d]
+  copy = ''.join(copy)
+  
+  answer = tokenizer.encode(copy).ids
 
+  l = len(answer)
+  sel = int(random.random() * l)
+  delete = random.sample(range(l), sel // 20)
 
-  model = BartForConditionalGeneration(configuration)
-  model.cuda()
+  for d in delete:
+    answer[d] = tokenizer.token_to_id("[MASK]")
 
-  objective = nn.CrossEntropyLoss(ignore_index = tokenizer.token_to_id("[PAD]"))
-  optimizer = optim.Adam(model.parameters(), lr=3e-4)
+  return answer
 
-  def noise(s):
-    copy = list(s)
-    l = len(copy)
-    sel = int(random.random() * l)
-    delete = random.sample(range(l), sel // 20)
+def prep_auto_batch(sents):
+  ss = []
+  ts = []
+  ls = []
+  for s, k in zip(*sents):
+    source = noise(s)
+    label = tokenizer.encode(s).ids
+    targ = [tokenizer.token_to_id(k)] + label[:-1]
+    ss.append(source)
+    ts.append(targ)
+    ls.append(label)
+  
+  pad_len = max([len(s) for s in ss])
 
-    for d in delete:
-      del copy[d]
-    copy = ''.join(copy)
+  for s in ss:
+      s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
+
+  pad_len = max([len(t) for t in ts])
+
+  for t in ts:
+      t.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(t)))
+
+  for l in ls:
+      l.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(l)))
+  
+  return ss, ts, ls
+
+configuration = BartConfig( vocab_size = tokenizer.get_vocab_size(),
+                            max_position_embeddings = 512,
+                            encoder_layers = 6,
+                            encoder_ffn_dim = 2048,
+                            encoder_attention_heads = 8,
+                            decoder_layers = 6,
+                            decoder_ffn_dim = 2048,
+                            decoder_attention_heads = 8,
+                            encoder_layerdrop = 0.0,
+                            decoder_layerdrop = 0.0,
+                            activation_function = 'swish',
+                            d_model = 512,
+                            dropout = 0.1,
+                            attention_dropout = 0.0,
+                            activation_dropout = 0.0,
+                            init_std = 0.02,
+                            classifier_dropout = 0.0,
+                            scale_embedding = True,
+                            pad_token_id = tokenizer.token_to_id("[PAD]"),
+                            bos_token_id = 0,
+                            eos_token_id = tokenizer.token_to_id("[CLS]"),
+                            is_encoder_decoder = True,
+                            decoder_start_token_id = tokenizer.token_to_id("[EN]"),
+                            forced_eos_token_id = tokenizer.token_to_id("[CLS]"),
+                            num_labels = len(langs) ) # for descriminator
+
+model = BartForConditionalGeneration(configuration)
+
+class Descriminator(nn.Module):
+  def __init__(self, config):
+    super(Descriminator, self).__init__()
     
-    answer = tokenizer.encode(copy).ids
+    self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(3)]) # TODO: EXPERIMENT WITH THIS NUMBER
+    self.classification_head = BartClassificationHead(
+      config.d_model,
+      config.d_model,
+      config.num_labels,
+      config.classifier_dropout,
+    )
 
-    l = len(answer)
-    sel = int(random.random() * l)
-    delete = random.sample(range(l), sel // 20)
+  def forward(self, outputs):
+    print(outputs.shape)
 
-    for d in delete:
-      answer[d] = tokenizer.token_to_id("[MASK]")
+descrim = Descriminator(copy.deepcopy(configuration))
 
-    return answer
+sents = (['Hello, this is a test'], ['[EN]'])
 
-  def prep_auto_batch(sents):
-    ss = []
-    ts = []
-    for s, k in zip(*sents):
-      source = noise(s)
-      targ = [tokenizer.token_to_id(k)] + tokenizer.encode(s).ids[:-1]
-      ss.append(source)
-      ts.append(targ)
+enc, dec, lab = prep_auto_batch(sents)
+
+enc = torch.tensor(enc)
+dec = torch.tensor(dec)
+lab = torch.tensor(lab)
+
+outputs = model.model.encoder(input_ids=enc)[0] #, decoder_input_ids=dec)[0]
+
+print(outputs.shape)
+
+exit(0)
+
+# descrim_config = copy.deepcopy(configuration)
+# descrim = BartForSequenceClassification(descrim_config)
+# descrim.model.encoder = model.model.encoder # dup the model
+# descrim.model.decoder.embed_tokens = descrim.model.encoder.embed_tokens # dup the embeddings
+
+# for name, param in descrim.named_parameters():
+#   if 'shared' in name or 'embed_tokens' in name or 'encoder' in name:
+#     print(name)
+
+model.cuda()
+#descrim.cuda()
+
+objective = nn.CrossEntropyLoss(ignore_index = tokenizer.token_to_id("[PAD]"))
+
+full_optimizer = optim.Adam(model.parameters(), lr=3e-4)
+#encoder_optimizer = optim.Adam(descrim.model.encoder.parameters(), lr=3e-4)
+#descrim_optimizer = optim.Adam(descrim.parameters(), lr=3e-4)
+
+for epoch in range(10):
+  batch = 0
+  loop = tqdm(total=len(train_dataset_loader))
+  for sent in train_dataset_loader:
+    batch += 1
+    #print('BATCH', batch)
+
+    input_enc, input_dec, labels = prep_auto_batch(sent)
+
+    input_enc = torch.tensor(input_enc)
+    input_dec = torch.tensor(input_dec)
+    labels = torch.tensor(labels)
+
+    input_enc = input_enc.cuda()
+    input_dec = input_dec.cuda()
+    labels = labels.cuda()
     
-    pad_len = max([len(s) for s in ss])
+    outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
+    logits = outputs.logits # only compute loss once
+    loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
 
-    for s in ss:
-        s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
+    loss.backward()
+    loop.update(1)
 
-    for t in ts:
-        t.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(t)))
-    
-    return ss, ts
+    if batch % grad_accum == 0:
+      if batch % 24 == 0:
+        loop.set_description('{:.3f}'.format(loss.item()))
+      if batch % 200 == 0:
+        generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[EN]'))
+        print(sent[0][0])
+        print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
 
-  for epoch in range(10):
-    batch = 0
-    loop = tqdm(total=len(train_dataset_loader))
-    for sent in train_dataset_loader:
-      batch += 1
-      #print('BATCH', batch)
-  
-      input_enc, input_dec = prep_auto_batch(sent)
-  
-      input_enc = torch.tensor(input_enc)
-      input_dec = torch.tensor(input_dec)
-  
-      input_enc = input_enc.cuda()
-      input_dec = input_dec.cuda()
-      
-      outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
-      logits = outputs.logits # only compute loss once
-      loss = objective(logits.view(-1, tokenizer.get_vocab_size()), input_enc.view(-1)) # ignore padding in loss function
-  
-      loss.backward()
-      loop.update(1)
-  
-      if batch % 4 == 0:
-        if batch % 24 == 0:
-          loop.set_description('{:.3f}'.format(loss.item()))
-        if batch % 200 == 0:
-          generated = model.generate(input_enc[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(sent[1][0]))
-          print(sent[0][0])
-          print(generated[0].cpu().numpy())
-          print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
-        optimizer.step()
-        optimizer.zero_grad()
-  
-      sys.stdout.flush()
-    loop.close()
+        generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[FA]'))
+        print(sent[0][0])
+        print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
+      full_optimizer.step()
+      full_optimizer.zero_grad()
 
-    torch.save(model.state_dict(), 'best')
-scope()
+    sys.stdout.flush()
+  loop.close()
+
+  torch.save(model.state_dict(), 'best')
