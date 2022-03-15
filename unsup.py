@@ -167,6 +167,8 @@ class Descriminator(nn.Module):
     super(Descriminator, self).__init__()
     
     self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(3)]) # TODO: EXPERIMENT WITH THIS NUMBER
+    self.config = config
+    self.layerdrop = 0 #config.decoder_layerdrop
     self.classification_head = BartClassificationHead(
       config.d_model,
       config.d_model,
@@ -174,8 +176,26 @@ class Descriminator(nn.Module):
       config.classifier_dropout,
     )
 
-  def forward(self, outputs):
-    print(outputs.shape)
+  def forward(self, hidden_states):
+    print(hidden_states.shape)
+
+    for encoder_layer in self.layers:
+
+      # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
+      dropout_probability = random.uniform(0, 1)
+      if dropout_probability < self.layerdrop:  # skip the layer
+          layer_outputs = (None, None)
+      else:
+          layer_outputs = encoder_layer(
+              hidden_states,
+              None, # attention mask
+              layer_head_mask=None,
+              output_attentions=None,
+          )
+
+          hidden_states = layer_outputs[0]
+
+    print(hidden_states.shape)
 
 descrim = Descriminator(copy.deepcopy(configuration))
 
@@ -189,7 +209,7 @@ lab = torch.tensor(lab)
 
 outputs = model.model.encoder(input_ids=enc)[0] #, decoder_input_ids=dec)[0]
 
-print(outputs.shape)
+descrim(outputs)
 
 exit(0)
 

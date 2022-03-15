@@ -2,3 +2,4 @@ cleaning/*
 old/*
 **/slurm-*
 best
+__pycache__/**
