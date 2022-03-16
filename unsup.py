@@ -46,9 +46,9 @@ from util import BartClassificationHead, BartEncoderLayer
 #from google.colab import drive
 #drive.mount('/content/gdrive')
 
-path = "cleaning/"
+path = "data/cleaning/"
 
-files = [path + file for file in ["Sorenson-withOPUS.en-US", "Sorenson-withOPUS.fa-IR"]]
+files = [path + file for file in ["Sorenson.en-US", "Sorenson.fa-IR"]]
 
 class TextDataset(Dataset):
   def __init__(self, files):
@@ -68,21 +68,7 @@ train_dataset = TextDataset(files)
 
 train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
 
-tokenizer = Tokenizer(WordPiece())
-
-trainer = WordPieceTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "[EN]", "[FA]"])
-
-tokenizer.pre_tokenizer = Whitespace()
-
-tokenizer.train(files, trainer)
-
-tokenizer.post_processor = TemplateProcessing(
-    single="$A [CLS]",
-    special_tokens=[
-        #("[CLS]", tokenizer.token_to_id("[CLS]")),
-        ("[CLS]", tokenizer.token_to_id("[CLS]")),
-    ],
-)
+tokenizer = Tokenizer.from_file("data/tokenizer.json")
 
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
@@ -182,9 +168,10 @@ class Descriminator(nn.Module):
   def __init__(self, config):
     super(Descriminator, self).__init__()
     
-    self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(3)]) # TODO: EXPERIMENT WITH THIS NUMBER
+    self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(2)]) # TODO: EXPERIMENT WITH THIS NUMBER
     self.config = config
     self.layerdrop = 0 #config.decoder_layerdrop
+
     self.classification_head = BartClassificationHead(
       config.d_model,
       config.d_model,
@@ -210,9 +197,13 @@ class Descriminator(nn.Module):
 
           hidden_states = layer_outputs[0]
 
-    sentence_representation = hidden_states[:, -1, :] # Extract EOS representations for classification
-    logits = self.classification_head(sentence_representation)
+    #_, sentence_representation = self.gru(hidden_states)
 
+    #sentence_representation = sentence_representation.view(hidden_states.shape[0], -1)
+
+    #sentence_representation = hidden_states[:, -1, :] # Extract EOS representations for classification
+    logits = self.classification_head(hidden_states).mean(dim=1)
+    
     return logits
 
 descrim = Descriminator(copy.deepcopy(configuration))
@@ -231,15 +222,16 @@ descrim = Descriminator(copy.deepcopy(configuration))
 
 # exit(0)
 
-model.cuda()
-descrim.cuda()
+if torch.cuda.is_available():
+  model.cuda()
+  descrim.cuda()
 
 objective = nn.CrossEntropyLoss(ignore_index = tokenizer.token_to_id("[PAD]"))
 descrim_objective = nn.BCEWithLogitsLoss()
 
 full_optimizer = optim.Adam(model.parameters(), lr=3e-4)
-encoder_optimizer = optim.Adam(model.model.encoder.parameters(), lr=3e-4)
-descrim_optimizer = optim.Adam(descrim.parameters(), lr=3e-4)
+encoder_optimizer = optim.Adam(model.model.encoder.parameters(), lr=2e-4)
+descrim_optimizer = optim.Adam(descrim.parameters(), lr=2e-4)
 
 
 def get_descrim_batch():
@@ -263,8 +255,9 @@ def train_descrim():
     batch += 1
     input_enc, labels = get_descrim_batch()
 
-    input_enc = input_enc.cuda()
-    labels = labels.cuda()
+    if torch.cuda.is_available():
+      input_enc = input_enc.cuda()
+      labels = labels.cuda()
 
     with torch.no_grad():
       outputs = model.model.encoder(input_ids=input_enc)[0]
@@ -286,8 +279,9 @@ def train_descrim():
     batch += 1
     input_enc, labels = get_descrim_batch()
 
-    input_enc = input_enc.cuda()
-    labels = labels.cuda()
+    if torch.cuda.is_available():
+      input_enc = input_enc.cuda()
+      labels = labels.cuda()
 
     labels = 1 - labels
 
@@ -308,7 +302,7 @@ def train_descrim():
 full_optimizer.zero_grad()
 
 dloss, eloss = 100, 100
-for epoch in range(10):
+for epoch in range(1000):
   batch = 0
   loop = tqdm(total=len(train_dataset_loader))
   for sent in train_dataset_loader:
@@ -321,9 +315,10 @@ for epoch in range(10):
     input_dec = torch.tensor(input_dec)
     labels = torch.tensor(labels)
 
-    input_enc = input_enc.cuda()
-    input_dec = input_dec.cuda()
-    labels = labels.cuda()
+    if torch.cuda.is_available():
+      input_enc = input_enc.cuda()
+      input_dec = input_dec.cuda()
+      labels = labels.cuda()
     
     outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
     logits = outputs.logits # only compute loss once
@@ -344,11 +339,12 @@ for epoch in range(10):
       full_optimizer.step()
       full_optimizer.zero_grad()
 
-      if batch / grad_accum % 100 == 0:
+      if batch // grad_accum % 100 == 0:
         dloss, eloss = train_descrim()
       if batch % 24 == 0:
-        loop.set_description('Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(loss.item(), dloss, eloss))
+        loop.set_description('Epoch: {} Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(epoch, loss.item(), dloss, eloss))
     sys.stdout.flush()
   loop.close()
 
   torch.save(model.state_dict(), 'best')
+  torch.save(descrim.state_dict(), 'best-descrim')

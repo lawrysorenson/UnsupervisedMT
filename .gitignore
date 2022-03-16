@@ -1,5 +1,6 @@
-cleaning/*
+data/**
 old/*
 **/slurm-*
 best
+best-descrim
 __pycache__/**
