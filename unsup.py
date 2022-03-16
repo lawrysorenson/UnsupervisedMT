@@ -39,6 +39,7 @@ from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from transformers import BartTokenizer
 
+import dumb
 
 from util import BartClassificationHead, BartEncoderLayer
 
@@ -299,6 +300,43 @@ def train_descrim():
 
   return loss_desc, loss_enc
 
+def prep_cross_batch(sents, first):
+  ss = []
+  ts = []
+  ls = []
+  for s, sk in zip(*sents):
+    # Randomly select a target language
+    si = l2ind[sk]
+    ti = int(random.random() * len(langs) - 1)
+    if ti >= si:
+      ti += 1
+    tk = langs[ti]
+
+    #TODO: not first
+    trans = dumb.dumb_translate(sk[1:3].lower(), tk[1:3].lower(), s)
+    source = tokenizer.encode(trans).ids
+
+    label = tokenizer.encode(s).ids
+    targ = [tokenizer.token_to_id(sk)] + label[:-1]
+    ss.append(source)
+    ts.append(targ)
+    ls.append(label)
+  
+  pad_len = max([len(s) for s in ss])
+
+  for s in ss:
+      s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
+
+  pad_len = max([len(t) for t in ts])
+
+  for t in ts:
+      t.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(t)))
+
+  for l in ls:
+      l.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(l)))
+  
+  return ss, ts, ls
+
 full_optimizer.zero_grad()
 
 dloss, eloss = 100, 100
@@ -309,6 +347,7 @@ for epoch in range(1000):
     batch += 1
     #print('BATCH', batch)
 
+    # Train auto encoder
     input_enc, input_dec, labels = prep_auto_batch(sent)
 
     input_enc = torch.tensor(input_enc)
@@ -325,6 +364,25 @@ for epoch in range(1000):
     loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
 
     loss.backward()
+
+    # Train cross encoder
+    input_enc, input_dec, labels = prep_cross_batch(sent, True)
+
+    input_enc = torch.tensor(input_enc)
+    input_dec = torch.tensor(input_dec)
+    labels = torch.tensor(labels)
+
+    if torch.cuda.is_available():
+      input_enc = input_enc.cuda()
+      input_dec = input_dec.cuda()
+      labels = labels.cuda()
+    
+    outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
+    logits = outputs.logits # only compute loss once
+    loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
+
+    loss.backward()
+
     loop.update(1)
 
     if batch % grad_accum == 0:

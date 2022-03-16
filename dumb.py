@@ -36,7 +36,7 @@ def dumb_translate(l1, l2, sent):
     
     #print(ans)
 
-    return ans
+    return ' '.join(ans)
 
 #dumb_translate('fa', 'en', 'سلام, دوست خوبم!')
             
