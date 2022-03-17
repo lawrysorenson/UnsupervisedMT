@@ -49,7 +49,7 @@ from util import BartClassificationHead, BartEncoderLayer
 
 path = "data/cleaning/"
 
-files = [path + file for file in ["Sorenson.en-US", "Sorenson.fa-IR"]]
+files = [path + file for file in ["Sorenson-withOPUS.en-US", "Sorenson-withOPUS.fa-IR"]]
 
 class TextDataset(Dataset):
   def __init__(self, files):
@@ -57,7 +57,7 @@ class TextDataset(Dataset):
     for file in files:
       lang = '['+file[-5:-3].upper()+']'
       with open(file, 'r') as f:
-          self.data.extend([(l.strip(), lang) for l in f.readlines() if len(l) < 1000])
+          self.data.extend([(l.strip(), lang) for l in f.readlines() if len(l) < 300])
 
   def __getitem__(self, i):
     return self.data[i]
@@ -312,15 +312,29 @@ def prep_cross_batch(sents, first):
       ti += 1
     tk = langs[ti]
 
-    #TODO: not first
-    trans = dumb.dumb_translate(sk[1:3].lower(), tk[1:3].lower(), s)
-    source = tokenizer.encode(trans).ids
-
     label = tokenizer.encode(s).ids
     targ = [tokenizer.token_to_id(sk)] + label[:-1]
+
+    if first:
+      trans, countUNK = dumb.dumb_translate(sk[1:3].lower(), tk[1:3].lower(), s)
+      source = tokenizer.encode(trans).ids
+
+      #if countUNK > 0.2 * len(source): # skip sentences with many unknowns
+      #  continue
+    else:
+      with torch.no_grad():
+        generated = last_model.generate(torch.tensor(label).cuda().unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(tk))
+        trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
+        trans = trans.replace(' ##', '')
+        #print(trans)
+        source = tokenizer.encode(trans).ids
+
     ss.append(source)
     ts.append(targ)
     ls.append(label)
+
+  if len(ss) == 0:
+    return None
   
   pad_len = max([len(s) for s in ss])
 
@@ -338,6 +352,8 @@ def prep_cross_batch(sents, first):
   return ss, ts, ls
 
 full_optimizer.zero_grad()
+
+last_model = copy.deepcopy(model)
 
 dloss, eloss = 100, 100
 for epoch in range(1000):
@@ -365,23 +381,26 @@ for epoch in range(1000):
 
     loss.backward()
 
-    # Train cross encoder
-    input_enc, input_dec, labels = prep_cross_batch(sent, True)
+    if batch % 3 == 0:
+      # Train cross encoder
+      cross_batch = prep_cross_batch(sent, epoch == 0)
 
-    input_enc = torch.tensor(input_enc)
-    input_dec = torch.tensor(input_dec)
-    labels = torch.tensor(labels)
+      if cross_batch:
+        input_enc, input_dec, labels = cross_batch
+        input_enc = torch.tensor(input_enc)
+        input_dec = torch.tensor(input_dec)
+        labels = torch.tensor(labels)
 
-    if torch.cuda.is_available():
-      input_enc = input_enc.cuda()
-      input_dec = input_dec.cuda()
-      labels = labels.cuda()
-    
-    outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
-    logits = outputs.logits # only compute loss once
-    loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
+        if torch.cuda.is_available():
+          input_enc = input_enc.cuda()
+          input_dec = input_dec.cuda()
+          labels = labels.cuda()
+        
+        outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
+        logits = outputs.logits # only compute loss once
+        loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
 
-    loss.backward()
+        loss.backward()
 
     loop.update(1)
 
@@ -400,9 +419,12 @@ for epoch in range(1000):
       if batch // grad_accum % 100 == 0:
         dloss, eloss = train_descrim()
       if batch % 24 == 0:
-        loop.set_description('Epoch: {} Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(epoch, loss.item(), dloss, eloss))
+        loop.set_description('Epoch: {} Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(epoch+1, loss.item(), dloss, eloss))
     sys.stdout.flush()
   loop.close()
 
   torch.save(model.state_dict(), 'best')
   torch.save(descrim.state_dict(), 'best-descrim')
+
+  last_model = copy.deepcopy(model)
+  last_model.eval()

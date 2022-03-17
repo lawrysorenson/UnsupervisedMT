@@ -20,10 +20,12 @@ for file in os.listdir(path):
 
 def dumb_translate(l1, l2, sent):
     # Seperate tokens by word boundary
-    sent = re.sub('\\b', ' ', sent).strip()
+    sent = re.sub('\\b', ' ', sent.lower()).strip()
     sent = re.sub(' +', ' ', sent).split()
 
     mem = memory[l1 + '-' + l2]
+
+    countUNK = 0
 
     ans = []
     for t in sent:
@@ -32,11 +34,12 @@ def dumb_translate(l1, l2, sent):
             i = int(random.random() * len(possibs))
             ans.append(possibs[i])
         else:
+            countUNK += 1
             ans.append(t)
     
     #print(ans)
 
-    return ' '.join(ans)
+    return ' '.join(ans), countUNK
 
 #dumb_translate('fa', 'en', 'سلام, دوست خوبم!')
             
