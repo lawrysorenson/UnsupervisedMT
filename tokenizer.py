@@ -11,9 +11,22 @@ trainer = WordPieceTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "
 
 tokenizer.pre_tokenizer = Whitespace()
 
-path = "data/cleaning/"
-files = [path + file for file in ["Sorenson.en-US", "Sorenson.fa-IR"]]
+path = "data/split/"
+corename = 'Sorenson-withOPUS'
+files = [path + corename + '-train' + ext for ext in [".en-US", ".fa-IR"]]
 tokenizer.train(files, trainer)
+
+for f in files:
+    nf = f[:-6] + '-token' + f[-6:]
+    f = open(f, 'r')
+    nf = open(nf, 'w')
+
+    for l in f.readlines():
+        l = l.lower().strip()
+        nf.write(' '.join(tokenizer.encode(l).tokens) + '\n')
+
+    f.close()
+    nf.close()
 
 tokenizer.post_processor = TemplateProcessing(
     single="$A [CLS]",
@@ -23,4 +36,5 @@ tokenizer.post_processor = TemplateProcessing(
     ],
 )
 
-tokenizer.save("data/tokenizer.json")
+
+tokenizer.save("data/tokenizers/" + corename + ".json")

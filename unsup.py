@@ -9,6 +9,8 @@ Original file is located at
 
 grad_accum = 4
 batch_size = 8
+swapProb = 1
+swapProbDecay = 0.002
 
 from itertools import accumulate
 import sys
@@ -47,9 +49,9 @@ from util import BartClassificationHead, BartEncoderLayer
 #from google.colab import drive
 #drive.mount('/content/gdrive')
 
-path = "data/cleaning/"
+path = "data/split/"
 
-files = [path + file for file in ["Sorenson-withOPUS.en-US", "Sorenson-withOPUS.fa-IR"]]
+files = [path + file for file in ["Sorenson-withOPUS-train.en-US", "Sorenson-withOPUS-train.fa-IR"]]
 
 class TextDataset(Dataset):
   def __init__(self, files):
@@ -69,7 +71,7 @@ train_dataset = TextDataset(files)
 
 train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
 
-tokenizer = Tokenizer.from_file("data/tokenizer.json")
+tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson-withOPUS.json")
 
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
@@ -92,6 +94,17 @@ def noise(s):
 
   for d in delete:
     answer[d] = tokenizer.token_to_id("[MASK]")
+
+  # swap tokens
+  sel = int(random.random() * l / swapProb)
+
+  for _ in range(sel):
+    i = int(random.random() * l - 1) # don't swap cls
+    j = int(random.random() * 6 - 3) # swap dist of 2 tokens
+    if j>=0:
+      j+=1
+    j = max(0, min(len(answer)-2, i+j))
+    answer[i], answer[j] = answer[j], answer[i]
 
   return answer
 
@@ -169,7 +182,7 @@ class Descriminator(nn.Module):
   def __init__(self, config):
     super(Descriminator, self).__init__()
     
-    self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(2)]) # TODO: EXPERIMENT WITH THIS NUMBER
+    self.layers = nn.ModuleList([BartEncoderLayer(config) for _ in range(6)]) # TODO: EXPERIMENT WITH THIS NUMBER
     self.config = config
     self.layerdrop = 0 #config.decoder_layerdrop
 
@@ -247,12 +260,12 @@ def get_descrim_batch():
     return input_enc, labels
 
 def train_descrim():
-  descrim_steps = 10
+  descrim_steps = 1
 
   descrim_optimizer.zero_grad()
   batch = 0
   loss_desc = 0
-  for _ in range(grad_accum * descrim_steps):
+  for _ in range(grad_accum * descrim_steps * 20):
     batch += 1
     input_enc, labels = get_descrim_batch()
 
@@ -319,8 +332,8 @@ def prep_cross_batch(sents, first):
       trans, countUNK = dumb.dumb_translate(sk[1:3].lower(), tk[1:3].lower(), s)
       source = tokenizer.encode(trans).ids
 
-      #if countUNK > 0.2 * len(source): # skip sentences with many unknowns
-      #  continue
+      if countUNK > 0.5 * len(source): # skip sentences with many unknowns
+        continue
     else:
       with torch.no_grad():
         generated = last_model.generate(torch.tensor(label).cuda().unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(tk))
@@ -381,7 +394,7 @@ for epoch in range(1000):
 
     loss.backward()
 
-    if batch % 3 == 0:
+    if batch % 8 == 0:
       # Train cross encoder
       cross_batch = prep_cross_batch(sent, epoch == 0)
 
@@ -417,8 +430,10 @@ for epoch in range(1000):
       full_optimizer.zero_grad()
 
       if batch // grad_accum % 100 == 0:
+        swapProb += swapProbDecay
         dloss, eloss = train_descrim()
-      if batch % 24 == 0:
+      
+      if batch // grad_accum % 3 == 0:
         loop.set_description('Epoch: {} Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(epoch+1, loss.item(), dloss, eloss))
     sys.stdout.flush()
   loop.close()
