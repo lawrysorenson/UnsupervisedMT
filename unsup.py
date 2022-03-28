@@ -9,7 +9,7 @@ Original file is located at
 
 grad_accum = 4
 batch_size = 8
-swapProb = 1
+swapProb = 2
 swapProbDecay = 0.002
 
 from itertools import accumulate
@@ -51,7 +51,7 @@ from util import BartClassificationHead, BartEncoderLayer
 
 path = "data/split/"
 
-files = [path + file for file in ["Sorenson-withOPUS-train.en-US", "Sorenson-withOPUS-train.fa-IR"]]
+files = [path + file for file in ["Sorenson-train.en-US", "Sorenson-train.fa-IR"]]
 
 class TextDataset(Dataset):
   def __init__(self, files):
@@ -71,7 +71,7 @@ train_dataset = TextDataset(files)
 
 train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
 
-tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson-withOPUS.json")
+tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson.json")
 
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
@@ -283,8 +283,12 @@ def train_descrim():
 
     if batch % grad_accum == 0:
       loss_desc += loss.item()
+      nn.utils.clip_grad_norm_(descrim.parameters(), 50.0)
       descrim_optimizer.step()
       descrim_optimizer.zero_grad()
+
+  if loss_desc > 5:
+    return loss_desc, 100
 
   encoder_optimizer.zero_grad()
   loss_enc = 0
@@ -308,6 +312,7 @@ def train_descrim():
 
     if batch % grad_accum == 0:
       loss_enc += loss.item()
+      nn.utils.clip_grad_norm_(model.model.encoder.parameters(), 50.0)
       encoder_optimizer.step()
       encoder_optimizer.zero_grad()
 
@@ -369,7 +374,7 @@ full_optimizer.zero_grad()
 last_model = copy.deepcopy(model)
 
 dloss, eloss = 100, 100
-for epoch in range(1000):
+for epoch in range(90):
   batch = 0
   loop = tqdm(total=len(train_dataset_loader))
   for sent in train_dataset_loader:
@@ -396,7 +401,7 @@ for epoch in range(1000):
 
     if batch % 8 == 0:
       # Train cross encoder
-      cross_batch = prep_cross_batch(sent, epoch == 0)
+      cross_batch = prep_cross_batch(sent, epoch * len(train_dataset_loader) + batch < 100000)
 
       if cross_batch:
         input_enc, input_dec, labels = cross_batch
@@ -426,13 +431,14 @@ for epoch in range(1000):
         generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[FA]'))
         print(sent[0][0])
         print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
+      nn.utils.clip_grad_norm_(model.parameters(), 50.0)
       full_optimizer.step()
       full_optimizer.zero_grad()
 
-      if batch // grad_accum % 100 == 0:
-        swapProb += swapProbDecay
+      if loss.item() < 2 and batch // grad_accum % 100 == 0:
         dloss, eloss = train_descrim()
-      
+      if batch // grad_accum % 200 == 0: 
+        swapProb += swapProbDecay
       if batch // grad_accum % 3 == 0:
         loop.set_description('Epoch: {} Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(epoch+1, loss.item(), dloss, eloss))
     sys.stdout.flush()
