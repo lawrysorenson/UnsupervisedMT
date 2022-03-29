@@ -1,6 +1,8 @@
 import random
 
-corename = 'Sorenson-withOPUS'
+test_size = 3000
+
+corename = 'comb'
 exts = ['.en-US', '.fa-IR']
 
 files = ['data/cleaning/' + corename + ext for ext in exts]
@@ -14,8 +16,8 @@ for f in fileshand:
 
 random.shuffle(lines)
 
-test = lines[-2500:]
-del lines[-2500:]
+test = lines[-test_size:]
+del lines[-test_size:]
 
 outfiles = ['data/split/' + corename + '-test' + ext for ext in exts]
 outfileshand = [open(f, 'w') for f in outfiles]

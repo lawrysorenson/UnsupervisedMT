@@ -45,13 +45,19 @@ import dumb
 
 from util import BartClassificationHead, BartEncoderLayer
 
+job_id = 1
+jobs = sorted([f for f in os.listdir('.') if 'slurm' in f])
+if jobs:
+  job_id = jobs[-1][6:-4]
+
 
 #from google.colab import drive
 #drive.mount('/content/gdrive')
 
 path = "data/split/"
+basename = 'comb'
 
-files = [path + file for file in ["Sorenson-train.en-US", "Sorenson-train.fa-IR"]]
+files = [path + basename + file for file in ["-train.en-US", "-train.fa-IR"]]
 
 class TextDataset(Dataset):
   def __init__(self, files):
@@ -70,6 +76,12 @@ class TextDataset(Dataset):
 train_dataset = TextDataset(files)
 
 train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
+
+with open(path + basename + '-test.en-US', 'r') as l1f:
+  with open(path + basename + '-test.fa-IR', 'r') as l2f:
+    anchor_dataset = list(zip(l1f.readlines(), l2f.readlines()))
+    test_dataset = anchor_dataset[:2500]
+    del anchor_dataset[:2500]
 
 tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson.json")
 
@@ -444,8 +456,29 @@ for epoch in range(90):
     sys.stdout.flush()
   loop.close()
 
-  torch.save(model.state_dict(), 'best')
-  torch.save(descrim.state_dict(), 'best-descrim')
+  torch.save(model.state_dict(), 'data/output/weights-'+job_id)
+  torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
 
   last_model = copy.deepcopy(model)
   last_model.eval()
+
+model.eval()
+
+def translate(sent, targ):
+  label = torch.tensor(tokenizer.encode(sent.strip()).ids)
+  if torch.cuda.is_available():
+    label = label.cuda()
+  generated = last_model.generate(label.unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(targ))
+  trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
+  trans = trans.replace(' ##', '')
+  return trans
+
+# Run test set
+with torch.no_grad():
+  with open('data/output/' + basename + '-' + job_id + '.en-US', 'w') as out1:
+    with open('data/output/' + basename + '-' + job_id + '.fa-IR', 'w') as out2:
+      for l1, l2 in test_dataset:
+        out2.write(translate(l1, '[FA]') + '\n')
+        out2.flush()
+        out1.write(translate(l2, '[EN]') + '\n')
+        out1.flush()

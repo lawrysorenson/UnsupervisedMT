@@ -13,5 +13,5 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
 
 /fslhome/pipoika3/fastText/fasttext skipgram -input data/split/Sorenson-train-token.en-US -output data/fasttext/Sorenson.en-US -dim 300 -epoch 20
 /fslhome/pipoika3/fastText/fasttext skipgram -input data/split/Sorenson-train-token.fa-IR -output data/fasttext/Sorenson.fa-IR -dim 300 -epoch 20
-/fslhome/pipoika3/fastText/fasttext skipgram -input data/split/Sorenson-withOPUS-train-token.en-US -output data/fasttext/Sorenson-withOPUS.en-US -dim 300 -epoch 20
-/fslhome/pipoika3/fastText/fasttext skipgram -input data/split/Sorenson-withOPUS-train-token.fa-IR -output data/fasttext/Sorenson-withOPUS.fa-IR -dim 300 -epoch 20
+/fslhome/pipoika3/fastText/fasttext skipgram -input data/split/OPUS-train-token.en-US -output data/fasttext/OPUS.en-US -dim 300 -epoch 20
+/fslhome/pipoika3/fastText/fasttext skipgram -input data/split/OPUS-train-token.fa-IR -output data/fasttext/OPUS.fa-IR -dim 300 -epoch 20

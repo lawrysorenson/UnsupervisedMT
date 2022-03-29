@@ -15,4 +15,4 @@ source /fslhome/pipoika3/anaconda3/etc/profile.d/conda.sh
 conda activate unsup
 
 python /fslhome/pipoika3/MUSE/unsupervised.py --src_lang en --tgt_lang fa --src_emb data/fasttext/Sorenson.en-US.vec --tgt_emb data/fasttext/Sorenson.fa-IR.vec --n_refinement 5
-python /fslhome/pipoika3/MUSE/unsupervised.py --src_lang en --tgt_lang fa --src_emb data/fasttext/Sorenson-withOPUS.en-US.vec --tgt_emb data/fasttext/Sorenson-withOPUS.fa-IR.vec --n_refinement 5
+python /fslhome/pipoika3/MUSE/unsupervised.py --src_lang en --tgt_lang fa --src_emb data/fasttext/OPUS.en-US.vec --tgt_emb data/fasttext/OPUS.fa-IR.vec --n_refinement 5

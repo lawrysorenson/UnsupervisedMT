@@ -12,7 +12,7 @@ trainer = WordPieceTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "
 tokenizer.pre_tokenizer = Whitespace()
 
 path = "data/split/"
-corename = 'Sorenson-withOPUS'
+corename = 'comb'
 files = [path + corename + '-train' + ext for ext in [".en-US", ".fa-IR"]]
 tokenizer.train(files, trainer)
 
