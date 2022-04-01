@@ -73,9 +73,10 @@ class TextDataset(Dataset):
   def __len__(self):
     return len(self.data)
 
-train_dataset = TextDataset(files)
+  def shuffle(self):
+    random.shuffle(self.data)
 
-train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
+train_dataset = TextDataset(files)
 
 with open(path + basename + '-test.en-US', 'r') as l1f:
   with open(path + basename + '-test.fa-IR', 'r') as l2f:
@@ -299,8 +300,8 @@ def train_descrim():
       descrim_optimizer.step()
       descrim_optimizer.zero_grad()
 
-  if loss_desc > 5:
-    return loss_desc, 100
+  #if loss_desc > 5:
+  #  return loss_desc, 100
 
   encoder_optimizer.zero_grad()
   loss_enc = 0
@@ -381,15 +382,84 @@ def prep_cross_batch(sents, first):
   
   return ss, ts, ls
 
+def prep_anchor_batch(l1, l2):
+  ss = []
+  ts = []
+  ls = []
+
+  source = noise(l1)
+  label = tokenizer.encode(l2).ids
+  targ = [tokenizer.token_to_id('[FA]')] + label[:-1]
+
+  ss.append(source)
+  ts.append(targ)
+  ls.append(label)
+
+  source = noise(l2)
+  label = tokenizer.encode(l1).ids
+  targ = [tokenizer.token_to_id('[EN]')] + label[:-1]
+
+  ss.append(source)
+  ts.append(targ)
+  ls.append(label)
+  
+  pad_len = max([len(s) for s in ss])
+
+  for s in ss:
+      s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
+
+  pad_len = max([len(t) for t in ts])
+
+  for t in ts:
+      t.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(t)))
+
+  for l in ls:
+      l.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(l)))
+  
+  return ss, ts, ls
+
 full_optimizer.zero_grad()
 
 last_model = copy.deepcopy(model)
 
-dloss, eloss = 100, 100
-for epoch in range(90):
-  batch = 0
-  loop = tqdm(total=len(train_dataset_loader))
-  for sent in train_dataset_loader:
+dloss, eloss = 1, 1
+batch = 0
+for epoch in range(50):
+  random.shuffle(anchor_dataset)
+  lanchor = len(anchor_dataset)
+  ianchor = 0
+
+  train_dataset.shuffle()
+  train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True)
+  train_length = len(train_dataset_loader) #min(6000, )
+  loop = tqdm(total=train_length)
+  for stopper, sent in enumerate(train_dataset_loader):
+    #if stopper > 6000: # limit size of epoch
+    #  break
+
+    # Train anchor
+    # TODO: this should be cleaned up
+    # targ_anchor = lanchor * stopper // train_length
+    # if ianchor + 1 < targ_anchor:
+    #   for ianchor in range(ianchor, targ_anchor):
+    #     input_enc, input_dec, labels = prep_anchor_batch(*anchor_dataset[ianchor])
+
+    #     input_enc = torch.tensor(input_enc)
+    #     input_dec = torch.tensor(input_dec)
+    #     labels = torch.tensor(labels)
+
+    #     if torch.cuda.is_available():
+    #       input_enc = input_enc.cuda()
+    #       input_dec = input_dec.cuda()
+    #       labels = labels.cuda()
+        
+    #     outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
+    #     logits = outputs.logits # only compute loss once
+    #     loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
+
+    #     loss.backward()
+    #   ianchor += 1
+
     batch += 1
     #print('BATCH', batch)
 
@@ -413,7 +483,7 @@ for epoch in range(90):
 
     if batch % 8 == 0:
       # Train cross encoder
-      cross_batch = prep_cross_batch(sent, epoch * len(train_dataset_loader) + batch < 100000)
+      cross_batch = prep_cross_batch(sent, batch < 100000)
 
       if cross_batch:
         input_enc, input_dec, labels = cross_batch
@@ -447,7 +517,7 @@ for epoch in range(90):
       full_optimizer.step()
       full_optimizer.zero_grad()
 
-      if loss.item() < 2 and batch // grad_accum % 100 == 0:
+      if batch // grad_accum % (int(dloss+1)**2*10) == 0:
         dloss, eloss = train_descrim()
       if batch // grad_accum % 200 == 0: 
         swapProb += swapProbDecay

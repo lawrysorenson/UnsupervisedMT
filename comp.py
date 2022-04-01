@@ -47,10 +47,10 @@ for raw, rawt in zip(comp_lines, comp_t_lines):
     for w in sent:
         score += orig_dict[w]
     score/=len(sent)**2
-    if score > -1:
+    if score > 0: # only store positive relations
         outputs.append((raw, rawt, score))
 
-output = sorted(outputs, key=lambda x:-x[2])[:50000]
+output = sorted(outputs, key=lambda x:-x[2])
 
 out1 = open('data/cleaning/comb.en-US', 'w')
 out2 = open('data/cleaning/comb.fa-IR', 'w')
