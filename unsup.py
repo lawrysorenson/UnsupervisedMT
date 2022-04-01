@@ -40,6 +40,7 @@ from tokenizers.trainers import BpeTrainer, WordPieceTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from transformers import BartTokenizer
+from nltk.translate.chrf_score import sentence_chrf
 
 import dumb
 
@@ -83,6 +84,8 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     anchor_dataset = list(zip(l1f.readlines(), l2f.readlines()))
     test_dataset = anchor_dataset[:2500]
     del anchor_dataset[:2500]
+    val_dataset = anchor_dataset[:200]
+    del anchor_dataset[:200]
 
 tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson.json")
 
@@ -418,47 +421,65 @@ def prep_anchor_batch(l1, l2):
   
   return ss, ts, ls
 
+
+def translate(sent, targ):
+  label = torch.tensor(tokenizer.encode(sent.strip()).ids)
+  if torch.cuda.is_available():
+    label = label.cuda()
+  generated = last_model.generate(label.unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(targ))
+  trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
+  trans = trans.replace(' ##', '')
+  return trans
+
+def get_chrF(sent, ref, targ):
+  trans = translate(sent, targ)
+  return sentence_chrf(trans, ref)
+
 full_optimizer.zero_grad()
 
 last_model = copy.deepcopy(model)
 
+best_chrf = 0
+
 dloss, eloss = 1, 1
 batch = 0
-for epoch in range(50):
+for epoch in range(100):
   random.shuffle(anchor_dataset)
   lanchor = len(anchor_dataset)
   ianchor = 0
 
   train_dataset.shuffle()
   train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True)
-  train_length = len(train_dataset_loader) #min(6000, )
+  train_length = len(train_dataset_loader)
+  #train_length = min(6000, train_length)
   loop = tqdm(total=train_length)
   for stopper, sent in enumerate(train_dataset_loader):
-    #if stopper > 6000: # limit size of epoch
-    #  break
+    if stopper >= train_length: # limit size of epoch
+     break
 
     # Train anchor
     # TODO: this should be cleaned up
-    # targ_anchor = lanchor * stopper // train_length
-    # if ianchor + 1 < targ_anchor:
-    #   for ianchor in range(ianchor, targ_anchor):
-    #     input_enc, input_dec, labels = prep_anchor_batch(*anchor_dataset[ianchor])
 
-    #     input_enc = torch.tensor(input_enc)
-    #     input_dec = torch.tensor(input_dec)
-    #     labels = torch.tensor(labels)
+    targ_anchor = lanchor * stopper // train_length
+    if ianchor + 1 < targ_anchor:
+      for ianchor in range(ianchor, targ_anchor):
+        input_enc, input_dec, labels = prep_anchor_batch(*anchor_dataset[ianchor])
 
-    #     if torch.cuda.is_available():
-    #       input_enc = input_enc.cuda()
-    #       input_dec = input_dec.cuda()
-    #       labels = labels.cuda()
+        input_enc = torch.tensor(input_enc)
+        input_dec = torch.tensor(input_dec)
+        labels = torch.tensor(labels)
+
+        if torch.cuda.is_available():
+          input_enc = input_enc.cuda()
+          input_dec = input_dec.cuda()
+          labels = labels.cuda()
         
-    #     outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
-    #     logits = outputs.logits # only compute loss once
-    #     loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
+        outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
+        logits = outputs.logits # only compute loss once
+        loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
 
-    #     loss.backward()
-    #   ianchor += 1
+        loss.backward()
+      ianchor += 1
 
     batch += 1
     #print('BATCH', batch)
@@ -526,22 +547,32 @@ for epoch in range(50):
     sys.stdout.flush()
   loop.close()
 
-  torch.save(model.state_dict(), 'data/output/weights-'+job_id)
-  torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
+  # Run validation set
+  model.eval()
+  with torch.no_grad():
+    loop = tqdm(total=len(val_dataset))
+    loop.set_description('Validation Epoch: {}'.format(epoch+1))
+    chrf = 0
+    for l1, l2 in val_dataset:
+      chrf += get_chrF(l1, l2, '[FA]')
+      chrf += get_chrF(l2, l2, '[FA]')/2 # lower weight from auto encoder
+      chrf += get_chrF(l2, l1, '[EN]')
+      chrf += get_chrF(l1, l1, '[EN]')/2
+      loop.update(1)
+    chrf /= len(val_dataset) * 3
+    loop.close()
+  model.train()
+
+  if chrf > best_chrf:
+    best_chrf = chrf
+    torch.save(model.state_dict(), 'data/output/weights-'+job_id)
+    torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
 
   last_model = copy.deepcopy(model)
   last_model.eval()
 
+model.load_state_dict(torch.load('data/output/weights-'+job_id))
 model.eval()
-
-def translate(sent, targ):
-  label = torch.tensor(tokenizer.encode(sent.strip()).ids)
-  if torch.cuda.is_available():
-    label = label.cuda()
-  generated = last_model.generate(label.unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(targ))
-  trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
-  trans = trans.replace(' ##', '')
-  return trans
 
 # Run test set
 with torch.no_grad():
