@@ -317,9 +317,9 @@ for back_trans in range(back_steps):
         loop.set_description('Backtick: {} Validation Epoch: {}'.format(back_trans, epoch+1))
         chrf = 0
         for l1, l2 in val_dataloader:
-          for trans, ref in zip(translate_batch(l1, '[FA]'), l1):
+          for trans, ref in zip(translate_batch(l1, '[FA]'), l2):
             chrf += sentence_chrf(trans, ref)
-          for trans, ref in zip(translate_batch(l2, '[EN]'), l2):
+          for trans, ref in zip(translate_batch(l2, '[EN]'), l1):
             chrf += sentence_chrf(trans, ref)
           loop.update(1)
         chrf /= len(val_dataset) * 2
