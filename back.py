@@ -97,8 +97,9 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     anchor_dataset = list(zip(l1f.readlines(), l2f.readlines()))
     test_dataset = anchor_dataset[:2500]
     del anchor_dataset[:2500]
-    val_dataset = anchor_dataset[:200]
-    del anchor_dataset[:200]
+    val_size = len(anchor_dataset) // 5
+    val_dataset = anchor_dataset[:val_size]
+    del anchor_dataset[:val_size]
 
 train_dataset = CrossDataset(anchor_dataset)
 val_dataset = CrossDataset(val_dataset)
