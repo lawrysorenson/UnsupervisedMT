@@ -473,6 +473,7 @@ best_chrf = 0
 
 dloss, eloss = 1, 1
 batch = 0
+early_stop = 0
 for epoch in range(100):
   random.shuffle(anchor_dataset)
   lanchor = len(anchor_dataset)
@@ -535,7 +536,7 @@ for epoch in range(100):
 
     if batch % 8 == 0:
       # Train cross encoder
-      cross_batch = prep_cross_batch(sent, batch < 90000)
+      cross_batch = prep_cross_batch(sent, (epoch*lanchor + ianchor)/2 + batch < 90000)
 
       if cross_batch:
         input_enc, input_dec, labels = cross_batch
@@ -604,6 +605,11 @@ for epoch in range(100):
       best_chrf = chrf
       torch.save(model.state_dict(), 'data/output/weights-'+job_id)
       torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
+      early_stop = 0
+    else:
+      early_stop += 1
+      if early_stop >= 4:
+        break
 
   last_model = copy.deepcopy(model)
   last_model.eval()
