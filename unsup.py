@@ -89,6 +89,21 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     del anchor_dataset[:val_size]
 
 tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson.json")
+class CrossDataset(Dataset):
+  def __init__(self, data):
+    self.data = data
+
+  def __getitem__(self, i):
+    return self.data[i]
+  
+  def __len__(self):
+    return len(self.data)
+
+  def shuffle(self):
+    random.shuffle(self.data)
+
+val_dataset = CrossDataset(val_dataset)
+val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size*16)
 
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
@@ -386,26 +401,27 @@ def prep_cross_batch(sents, first):
   
   return ss, ts, ls
 
-def prep_anchor_batch(l1, l2):
+def prep_anchor_batch(group):
   ss = []
   ts = []
   ls = []
 
-  source = noise(l1)
-  label = tokenizer.encode(l2).ids
-  targ = [tokenizer.token_to_id('[FA]')] + label[:-1]
+  for l1, l2 in group:
+    source = noise(l1)
+    label = tokenizer.encode(l2).ids
+    targ = [tokenizer.token_to_id('[FA]')] + label[:-1]
 
-  ss.append(source)
-  ts.append(targ)
-  ls.append(label)
+    ss.append(source)
+    ts.append(targ)
+    ls.append(label)
 
-  source = noise(l2)
-  label = tokenizer.encode(l1).ids
-  targ = [tokenizer.token_to_id('[EN]')] + label[:-1]
+    source = noise(l2)
+    label = tokenizer.encode(l1).ids
+    targ = [tokenizer.token_to_id('[EN]')] + label[:-1]
 
-  ss.append(source)
-  ts.append(targ)
-  ls.append(label)
+    ss.append(source)
+    ts.append(targ)
+    ls.append(label)
   
   pad_len = max([len(s) for s in ss])
 
@@ -431,6 +447,19 @@ def translate(sent, targ):
   trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
   trans = trans.replace(' ##', '')
   return trans
+
+def translate_batch(sents, lang):
+  label = [tokenizer.encode(sent.strip()).ids for sent in sents] # generate labels
+  pad_len = max([len(s) for s in label])
+  for s in label:
+      s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
+
+  label = torch.tensor(label)
+  if torch.cuda.is_available():
+    label = label.cuda()
+
+  generated = model.generate(label, min_length=1, max_length=200, decoder_start_token_id=tokenizer.token_to_id(lang))
+  return [tokenizer.decode(trans,skip_special_tokens=True).replace(' ##', '') for trans in generated.cpu().numpy()]
 
 def get_chrF(sent, ref, targ):
   trans = translate(sent, targ)
@@ -463,24 +492,25 @@ for epoch in range(100):
 
     targ_anchor = lanchor * stopper // train_length
     if ianchor + 1 < targ_anchor:
-      for ianchor in range(ianchor, targ_anchor):
-        input_enc, input_dec, labels = prep_anchor_batch(*anchor_dataset[ianchor])
+      # Can't be too big, at most 4
+      input_enc, input_dec, labels = prep_anchor_batch(anchor_dataset[ianchor:targ_anchor])
 
-        input_enc = torch.tensor(input_enc)
-        input_dec = torch.tensor(input_dec)
-        labels = torch.tensor(labels)
+      input_enc = torch.tensor(input_enc)
+      input_dec = torch.tensor(input_dec)
+      labels = torch.tensor(labels)
 
-        if torch.cuda.is_available():
-          input_enc = input_enc.cuda()
-          input_dec = input_dec.cuda()
-          labels = labels.cuda()
-        
-        outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
-        logits = outputs.logits # only compute loss once
-        loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
+      if torch.cuda.is_available():
+        input_enc = input_enc.cuda()
+        input_dec = input_dec.cuda()
+        labels = labels.cuda()
+      
+      outputs = model(input_ids=input_enc, decoder_input_ids=input_dec)
+      logits = outputs.logits # only compute loss once
+      loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
 
-        loss.backward()
-      ianchor += 1
+      loss.backward()
+
+      ianchor = targ_anchor
 
     batch += 1
     #print('BATCH', batch)
@@ -552,14 +582,18 @@ for epoch in range(100):
     # Run validation set
     model.eval()
     with torch.no_grad():
-      loop = tqdm(total=len(val_dataset))
+      loop = tqdm(total=len(val_dataloader))
       loop.set_description('Validation Epoch: {}'.format(epoch+1))
       chrf = 0
-      for l1, l2 in val_dataset:
-        chrf += get_chrF(l1, l2, '[FA]')
-        chrf += get_chrF(l2, l2, '[FA]')/2 # lower weight from auto encoder
-        chrf += get_chrF(l2, l1, '[EN]')
-        chrf += get_chrF(l1, l1, '[EN]')/2
+      for l1, l2 in val_dataloader:
+        for trans, ref in zip(translate_batch(l1, '[FA]'), l2):
+          chrf += sentence_chrf(trans, ref)
+        for trans, ref in zip(translate_batch(l2, '[FA]'), l2):
+          chrf += sentence_chrf(trans, ref) / 2
+        for trans, ref in zip(translate_batch(l2, '[EN]'), l1):
+          chrf += sentence_chrf(trans, ref)
+        for trans, ref in zip(translate_batch(l1, '[EN]'), l1):
+          chrf += sentence_chrf(trans, ref) / 2
         loop.update(1)
       chrf /= len(val_dataset) * 3
       loop.close()
