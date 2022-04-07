@@ -426,7 +426,7 @@ def translate(sent, targ):
   label = torch.tensor(tokenizer.encode(sent.strip()).ids)
   if torch.cuda.is_available():
     label = label.cuda()
-  generated = last_model.generate(label.unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(targ))
+  generated = model.generate(label.unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(targ))
   trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
   trans = trans.replace(' ##', '')
   return trans
@@ -504,7 +504,7 @@ for epoch in range(100):
 
     if batch % 8 == 0:
       # Train cross encoder
-      cross_batch = prep_cross_batch(sent, batch < 100000)
+      cross_batch = prep_cross_batch(sent, batch < 90000)
 
       if cross_batch:
         input_enc, input_dec, labels = cross_batch
@@ -547,26 +547,28 @@ for epoch in range(100):
     sys.stdout.flush()
   loop.close()
 
-  # Run validation set
-  model.eval()
-  with torch.no_grad():
-    loop = tqdm(total=len(val_dataset))
-    loop.set_description('Validation Epoch: {}'.format(epoch+1))
-    chrf = 0
-    for l1, l2 in val_dataset:
-      chrf += get_chrF(l1, l2, '[FA]')
-      chrf += get_chrF(l2, l2, '[FA]')/2 # lower weight from auto encoder
-      chrf += get_chrF(l2, l1, '[EN]')
-      chrf += get_chrF(l1, l1, '[EN]')/2
-      loop.update(1)
-    chrf /= len(val_dataset) * 3
-    loop.close()
-  model.train()
+  if epoch % 1 == 0:
+    # Run validation set
+    model.eval()
+    with torch.no_grad():
+      loop = tqdm(total=len(val_dataset))
+      loop.set_description('Validation Epoch: {}'.format(epoch+1))
+      chrf = 0
+      for l1, l2 in val_dataset:
+        chrf += get_chrF(l1, l2, '[FA]')
+        chrf += get_chrF(l2, l2, '[FA]')/2 # lower weight from auto encoder
+        chrf += get_chrF(l2, l1, '[EN]')
+        chrf += get_chrF(l1, l1, '[EN]')/2
+        loop.update(1)
+      chrf /= len(val_dataset) * 3
+      loop.close()
+    model.train()
 
-  if chrf > best_chrf:
-    best_chrf = chrf
-    torch.save(model.state_dict(), 'data/output/weights-'+job_id)
-    torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
+    if chrf > best_chrf:
+      print('Saving model...', chrf, '>', best_chrf)
+      best_chrf = chrf
+      torch.save(model.state_dict(), 'data/output/weights-'+job_id)
+      torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
 
   last_model = copy.deepcopy(model)
   last_model.eval()
