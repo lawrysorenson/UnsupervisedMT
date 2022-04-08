@@ -51,6 +51,7 @@ jobs = sorted([f for f in os.listdir('.') if 'slurm' in f])
 if jobs:
   job_id = jobs[-1][6:-4]
 
+print(job_id)
 
 #from google.colab import drive
 #drive.mount('/content/gdrive')
@@ -84,7 +85,7 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     anchor_dataset = list(zip(l1f.readlines(), l2f.readlines()))
     test_dataset = anchor_dataset[:2500]
     del anchor_dataset[:2500]
-    val_size = len(anchor_dataset) // 5
+    val_size = min(len(anchor_dataset) // 5, 2000)
     val_dataset = anchor_dataset[:val_size]
     del anchor_dataset[:val_size]
 
@@ -621,8 +622,17 @@ model.eval()
 with torch.no_grad():
   with open('data/output/' + basename + '-' + job_id + '.en-US', 'w') as out1:
     with open('data/output/' + basename + '-' + job_id + '.fa-IR', 'w') as out2:
-      for l1, l2 in test_dataset:
-        out2.write(translate(l1, '[FA]') + '\n')
+      test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=batch_size*16)
+      loop = tqdm(total=len(test_dataloader))
+      loop.set_description('Translating test set')
+      for l1s, l2s in test_dataloader:
+        for trans in translate_batch(l1s, '[FA]'):
+          out2.write(trans + '\n')
         out2.flush()
-        out1.write(translate(l2, '[EN]') + '\n')
+        for trans in translate_batch(l2s, '[EN]'):
+          out1.write(trans + '\n')
         out1.flush()
+        loop.update(1)
+      loop.close()
+      
+print(len(anchor_dataset))

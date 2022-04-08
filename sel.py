@@ -1,6 +1,6 @@
 import random
 
-test_size = 2500 + 10000
+test_size = 2500 + 30000
 
 corename = 'comb'
 exts = ['.en-US', '.fa-IR']
