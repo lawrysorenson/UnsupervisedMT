@@ -54,7 +54,7 @@ print(job_id)
 #drive.mount('/content/gdrive')
 
 path = "data/split/"
-basename = 'comb'
+basename = 'OPUS'
 
 files = [path + basename + file for file in ["-train.en-US", "-train.fa-IR"]]
 
@@ -347,7 +347,7 @@ for back_trans in range(back_steps):
     early_stop = 0
   else:
     early_stop += 1
-    if early_stop >= 2:
+    if early_stop >= 1:
       break
 
   # Refresh dataset with backtranslated data

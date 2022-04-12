@@ -57,7 +57,7 @@ print(job_id)
 #drive.mount('/content/gdrive')
 
 path = "data/split/"
-basename = 'comb'
+basename = 'OPUS'
 
 files = [path + basename + file for file in ["-train.en-US", "-train.fa-IR"]]
 
@@ -89,7 +89,7 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     val_dataset = anchor_dataset[:val_size]
     del anchor_dataset[:val_size]
 
-tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson.json")
+tokenizer = Tokenizer.from_file("data/tokenizers/OPUS.json")
 class CrossDataset(Dataset):
   def __init__(self, data):
     self.data = data
@@ -475,7 +475,7 @@ best_chrf = 0
 dloss, eloss = 1, 1
 batch = 0
 early_stop = 0
-for epoch in range(100):
+for epoch in range(200):
   random.shuffle(anchor_dataset)
   lanchor = len(anchor_dataset)
   ianchor = 0
@@ -483,7 +483,7 @@ for epoch in range(100):
   train_dataset.shuffle()
   train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True)
   train_length = len(train_dataset_loader)
-  #train_length = min(6000, train_length)
+  train_length = min(lanchor // batch_size * 4, train_length)
   loop = tqdm(total=train_length)
   for stopper, sent in enumerate(train_dataset_loader):
     if stopper >= train_length: # limit size of epoch
@@ -609,7 +609,7 @@ for epoch in range(100):
       early_stop = 0
     else:
       early_stop += 1
-      if early_stop >= 4:
+      if early_stop >= max(4, len(train_dataset_loader)//lanchor//batch_size//10):
         break
 
   last_model = copy.deepcopy(model)

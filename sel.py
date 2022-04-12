@@ -2,7 +2,7 @@ import random
 
 test_size = 2500 + 30000
 
-corename = 'comb'
+corename = 'OPUS'
 exts = ['.en-US', '.fa-IR']
 
 files = ['data/cleaning/' + corename + ext for ext in exts]
