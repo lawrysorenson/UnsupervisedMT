@@ -360,7 +360,7 @@ for back_trans in range(back_steps):
     with torch.no_grad():
       new_dataset = copy.deepcopy(anchor_dataset)
 
-      loop = tqdm(total=(len(mono_en_dataloader) + len(mono_en_dataloader)))
+      loop = tqdm(total=(len(mono_en_dataloader) + len(mono_fa_dataloader)))
       loop.set_description('Back translating')
       for sents, lang in mono_en_dataloader: # From english
         trans = translate_batch(sents, '[FA]')
@@ -369,7 +369,7 @@ for back_trans in range(back_steps):
           #print((sent, tran))
         loop.update(1)
 
-      for sents, lang in mono_en_dataloader: # from persian
+      for sents, lang in mono_fa_dataloader: # from persian
         trans = translate_batch(sents, '[EN]')
         for sent, tran in zip(sents, trans):
           new_dataset.append((tran, sent))

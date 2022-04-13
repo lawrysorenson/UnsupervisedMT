@@ -1,6 +1,6 @@
 import random
 
-test_size = 2500 + 100000
+test_size = 2500 + 1000
 
 corename = 'OPUS'
 exts = ['.en-US', '.fa-IR']
