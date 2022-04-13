@@ -33,6 +33,7 @@ import gc
 import copy
 from transformers import BartForConditionalGeneration, BartForSequenceClassification, BartConfig
 import random
+from collections import defaultdict
 
 from tokenizers import Tokenizer
 from tokenizers.models import BPE, WordPiece
@@ -103,6 +104,7 @@ class CrossDataset(Dataset):
   def shuffle(self):
     random.shuffle(self.data)
 
+anchor_dataset = CrossDataset(anchor_dataset)
 val_dataset = CrossDataset(val_dataset)
 val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size*16)
 
@@ -355,6 +357,10 @@ def prep_cross_batch(sents, first):
   ss = []
   ts = []
   ls = []
+
+  trans_batch = defaultdict(list)
+
+  ind = 0
   for s, sk in zip(*sents):
     # Randomly select a target language
     si = l2ind[sk]
@@ -368,29 +374,17 @@ def prep_cross_batch(sents, first):
 
     if first:
       trans, countUNK = dumb.dumb_translate(sk[1:3].lower(), tk[1:3].lower(), s)
-      source = tokenizer.encode(trans).ids
+      source = noise(trans)
 
       if countUNK > 0.5 * len(source): # skip sentences with many unknowns
         continue
+      ss.append(source)
     else:
-      with torch.no_grad():
-        generated = last_model.generate(torch.tensor(label).cuda().unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id(tk))
-        trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
-        trans = trans.replace(' ##', '')
-        #print(trans)
-        source = tokenizer.encode(trans).ids
+      trans_batch[tk].append(ind)
 
-    ss.append(source)
     ts.append(targ)
     ls.append(label)
-
-  if len(ss) == 0:
-    return None
-  
-  pad_len = max([len(s) for s in ss])
-
-  for s in ss:
-      s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
+    ind += 1
 
   pad_len = max([len(t) for t in ts])
 
@@ -399,15 +393,40 @@ def prep_cross_batch(sents, first):
 
   for l in ls:
       l.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(l)))
+
+  if not first:
+    ss = [None]*ind
+    with torch.no_grad(): # TODO: do all at once
+      for lang, indx in trans_batch.items():
+        labels = torch.tensor([ls[i] for i in indx])
+        if torch.cuda.is_available():
+          labels = labels.cuda()
+        generated = last_model.generate(labels, min_length=1, max_length=200, decoder_start_token_id=tokenizer.token_to_id(lang))
+        trans_set = [tokenizer.decode(trans,skip_special_tokens=True).replace(' ##', '') for trans in generated.cpu().numpy()]
+        sources = [noise(trans) for trans in trans_set]
+        for i, source in zip(indx, sources):
+          ss[i] = source
+      # trans = tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True)
+      # trans = trans.replace(' ##', '')
+      # #print(trans)
+      # source = tokenizer.encode(trans).ids
+
+  if len(ss) == 0:
+    return None
+  
+  pad_len = max([len(s) for s in ss])
+
+  for s in ss:
+      s.extend([tokenizer.token_to_id("[PAD]")] * (pad_len - len(s)))
   
   return ss, ts, ls
 
-def prep_anchor_batch(group):
+def prep_anchor_batch(l1s, l2s):
   ss = []
   ts = []
   ls = []
 
-  for l1, l2 in group:
+  for l1, l2 in zip(l1s, l2s):
     source = noise(l1)
     label = tokenizer.encode(l2).ids
     targ = [tokenizer.token_to_id('[FA]')] + label[:-1]
@@ -475,27 +494,36 @@ best_chrf = 0
 dloss, eloss = 1, 1
 batch = 0
 early_stop = 0
-for epoch in range(200):
-  random.shuffle(anchor_dataset)
-  lanchor = len(anchor_dataset)
-  ianchor = 0
 
-  train_dataset.shuffle()
-  train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True)
-  train_length = len(train_dataset_loader)
-  train_length = min(lanchor // batch_size * 4, train_length)
+anchor_loader = DataLoader(anchor_dataset, batch_size=batch_size, shuffle=True)
+
+def cycle(iter):
+  while True:
+    for x in iter:
+      yield x
+
+anchor_cycle = iter(cycle(anchor_loader))
+
+train_dataset_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
+train_length = len(train_dataset_loader)
+epoch_limit = 20000
+train_length = min(epoch_limit, train_length)
+
+
+train_cycle = iter(cycle(train_dataset_loader))
+
+for epoch in range(10000):
+
+  #train_length = min(lanchor // batch_size * 4, train_length)
   loop = tqdm(total=train_length)
-  for stopper, sent in enumerate(train_dataset_loader):
-    if stopper >= train_length: # limit size of epoch
-     break
+  stopper = 0
+  for sent in train_cycle: # All things are evenly represented, but still shuffled
 
     # Train anchor
     # TODO: this should be cleaned up
 
-    targ_anchor = lanchor * stopper // train_length
-    if ianchor + 1 < targ_anchor:
-      # Can't be too big, at most 4
-      input_enc, input_dec, labels = prep_anchor_batch(anchor_dataset[ianchor:targ_anchor])
+    if batch % 8 == 0:
+      input_enc, input_dec, labels = prep_anchor_batch(*next(anchor_cycle))
 
       input_enc = torch.tensor(input_enc)
       input_dec = torch.tensor(input_dec)
@@ -511,8 +539,6 @@ for epoch in range(200):
       loss = objective(logits.view(-1, tokenizer.get_vocab_size()), labels.view(-1)) # ignore padding in loss function
 
       loss.backward()
-
-      ianchor = targ_anchor
 
     batch += 1
     #print('BATCH', batch)
@@ -537,7 +563,7 @@ for epoch in range(200):
 
     if batch % 8 == 0:
       # Train cross encoder
-      cross_batch = prep_cross_batch(sent, (epoch*lanchor + ianchor)/2 + batch < 90000)
+      cross_batch = prep_cross_batch(sent, epoch < len(train_dataset) // epoch_limit * 2)
 
       if cross_batch:
         input_enc, input_dec, labels = cross_batch
@@ -560,13 +586,14 @@ for epoch in range(200):
 
     if batch % grad_accum == 0:
       if batch % 200 == 0:
-        generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[EN]'))
-        print(sent[0][0])
-        print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
+        with torch.no_grad():
+          generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[EN]'))
+          print(sent[0][0])
+          print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
 
-        generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[FA]'))
-        print(sent[0][0])
-        print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
+          generated = model.generate(labels[0].unsqueeze(0), max_length=200, decoder_start_token_id=tokenizer.token_to_id('[FA]'))
+          print(sent[0][0])
+          print(tokenizer.decode(generated[0].cpu().numpy(),skip_special_tokens=True))
       nn.utils.clip_grad_norm_(model.parameters(), 50.0)
       full_optimizer.step()
       full_optimizer.zero_grad()
@@ -578,6 +605,10 @@ for epoch in range(200):
       if batch // grad_accum % 3 == 0:
         loop.set_description('Epoch: {} Auto: {:.3f} Descriminator: {:.3f} Fooler: {:.3f}'.format(epoch+1, loss.item(), dloss, eloss))
     sys.stdout.flush()
+
+    stopper += 1
+    if stopper >= train_length: # limit size of epoch
+     break
   loop.close()
 
   if epoch % 1 == 0:
@@ -608,8 +639,9 @@ for epoch in range(200):
       torch.save(descrim.state_dict(), 'data/output/descrim-weights-'+job_id)
       early_stop = 0
     else:
+      print('Skip model...', chrf, '<', best_chrf)
       early_stop += 1
-      if early_stop >= max(4, len(train_dataset_loader)//lanchor//batch_size//10):
+      if early_stop >= 10:
         break
 
   last_model = copy.deepcopy(model)
