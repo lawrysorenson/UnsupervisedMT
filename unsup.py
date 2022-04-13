@@ -89,8 +89,9 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     val_size = min(len(anchor_dataset) // 5, 2000)
     val_dataset = anchor_dataset[:val_size]
     del anchor_dataset[:val_size]
+    print(len(anchor_dataset))
 
-tokenizer = Tokenizer.from_file("data/tokenizers/OPUS.json")
+tokenizer = Tokenizer.from_file("data/tokenizers/"+basename+".json")
 class CrossDataset(Dataset):
   def __init__(self, data):
     self.data = data
@@ -563,7 +564,7 @@ for epoch in range(10000):
 
     if batch % 8 == 0:
       # Train cross encoder
-      cross_batch = prep_cross_batch(sent, epoch < len(train_dataset) // epoch_limit * 2)
+      cross_batch = prep_cross_batch(sent, epoch < len(train_dataset) // batch_size // epoch_limit * 2)
 
       if cross_batch:
         input_enc, input_dec, labels = cross_batch

@@ -101,12 +101,13 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     val_size = min(len(anchor_dataset) // 5, 2000)
     val_dataset = anchor_dataset[:val_size]
     del anchor_dataset[:val_size]
+    print(len(anchor_dataset))
 
 train_dataset = CrossDataset(anchor_dataset)
 val_dataset = CrossDataset(val_dataset)
 val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size*16)
 
-tokenizer = Tokenizer.from_file("data/tokenizers/Sorenson.json")
+tokenizer = Tokenizer.from_file("data/tokenizers/"+basename+".json")
 
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
@@ -330,9 +331,10 @@ for back_trans in range(back_steps):
       if chrf > best_sub_chrf:
         print('Saving sub model...', chrf, '>', best_sub_chrf)
         best_sub_chrf = chrf
-        torch.save(model.state_dict(), 'temp-weights')
+        torch.save(model.state_dict(), 'temp-weights-'+job_id)
         early_sub_stop = 0
       else:
+        print('Skip save sub model...', chrf, '<', best_sub_chrf)
         early_sub_stop += 1
         if early_sub_stop >= 4:
           break
@@ -352,6 +354,9 @@ for back_trans in range(back_steps):
 
   # Refresh dataset with backtranslated data
   if back_trans+1 < back_steps:
+    model.load_state_dict(torch.load('temp-weights-'+job_id))
+    model.eval()
+
     with torch.no_grad():
       new_dataset = copy.deepcopy(anchor_dataset)
 
