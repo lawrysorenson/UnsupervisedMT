@@ -5,6 +5,8 @@ from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from transformers import BartTokenizer
 
+corename = 'OPUS'
+
 tokenizer = Tokenizer(WordPiece())
 
 trainer = WordPieceTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "[EN]", "[FA]"])
@@ -12,7 +14,6 @@ trainer = WordPieceTrainer(special_tokens=["[UNK]", "[CLS]", "[SEP]", "[PAD]", "
 tokenizer.pre_tokenizer = Whitespace()
 
 path = "data/split/"
-corename = 'OPUS'
 files = [path + corename + '-train' + ext for ext in [".en-US", ".fa-IR"]]
 tokenizer.train(files, trainer)
 

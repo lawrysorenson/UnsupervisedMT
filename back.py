@@ -7,6 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/1Ftr030cpKz87Lhc2HKo3KtB43o66NIi9
 """
 
+basename = 'OPUS'
 grad_accum = 4
 batch_size = 8
 swapProb = 2
@@ -54,7 +55,6 @@ print(job_id)
 #drive.mount('/content/gdrive')
 
 path = "data/split/"
-basename = 'OPUS'
 
 files = [path + basename + file for file in ["-train.en-US", "-train.fa-IR"]]
 

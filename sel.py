@@ -1,8 +1,11 @@
 import random
 
-test_size = 2500 + 1000
-
+parallel_size = 1000
 corename = 'OPUS'
+
+
+test_size = 2500 + parallel_size
+
 exts = ['.en-US', '.fa-IR']
 
 files = ['data/cleaning/' + corename + ext for ext in exts]
