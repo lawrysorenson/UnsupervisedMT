@@ -12,7 +12,7 @@ basename = sys.argv[1]
 seed_model = sys.argv[2]
 seed_base = sys.argv[3]
 
-print('Back translation')
+print('2-Step translation')
 
 print(basename)
 print(seed_model)
@@ -119,8 +119,8 @@ train_dataset = CrossDataset(anchor_dataset)
 val_dataset = CrossDataset(val_dataset)
 val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size*16)
 
-#tokenizer = Tokenizer.from_file("data/tokenizers/"+seed_base+".json")
-tokenizer = Tokenizer.from_file("data/tokenizers/"+basename+".json")
+tokenizer = Tokenizer.from_file("data/tokenizers/"+seed_base+".json")
+#tokenizer = Tokenizer.from_file("data/tokenizers/"+basename+".json")
 
 langs = ['[EN]', '[FA]']
 l2ind = { s:i for i, s in enumerate(langs) }
@@ -256,16 +256,16 @@ best_chrf = 0
 
 early_stop = 0
 train_dataset = CrossDataset(anchor_dataset)
-back_steps = 30
+back_steps = 1 # 30
 for back_trans in range(back_steps):
   model = BartForConditionalGeneration(configuration)
   if torch.cuda.is_available():
     model.cuda()
 
-  #if back_trans==0:
-  #  model.load_state_dict(torch.load('data/output/weights-'+seed_model))
-  #  model.train()
-
+  if back_trans==0:
+   model.load_state_dict(torch.load('data/output/weights-'+seed_model))
+   model.train()
+  
   full_optimizer = optim.Adam(model.parameters(), lr=3e-4)
 
   best_sub_chrf = 0

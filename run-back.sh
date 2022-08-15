@@ -16,8 +16,8 @@ source /fslhome/pipoika3/anaconda3/etc/profile.d/conda.sh
 conda activate unsup
 
 export JOB_ID=$SLURM_JOB_ID
-export BASE_NAME="Sorenson-5000"
-export SEED_ID="none"
-export SEED_BASE="none"
+export BASE_NAME="Sorenson-100"
+export SEED_ID="51463914"
+export SEED_BASE="OPUS-1000"
 python3 tokenizer.py $BASE_NAME
 python3 back.py $BASE_NAME $SEED_ID $SEED_BASE

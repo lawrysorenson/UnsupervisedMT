@@ -101,8 +101,8 @@ with open(path + basename + '-test.en-US', 'r') as l1f:
     del anchor_dataset[:val_size]
     print(len(anchor_dataset))
 
-#tokenizer = Tokenizer.from_file("data/tokenizers/"+seed_base+".json")
-tokenizer = Tokenizer.from_file("data/tokenizers/"+basename+".json")
+tokenizer = Tokenizer.from_file("data/tokenizers/"+seed_base+".json")
+#tokenizer = Tokenizer.from_file("data/tokenizers/"+basename+".json")
 class CrossDataset(Dataset):
   def __init__(self, data):
     self.data = data
@@ -224,8 +224,8 @@ configuration = BartConfig( vocab_size = tokenizer.get_vocab_size(),
                             num_labels = len(langs) ) # for descriminator
 
 model = BartForConditionalGeneration(configuration)
-#model.load_state_dict(torch.load('data/output/weights-'+seed_model))
-#model.train()
+model.load_state_dict(torch.load('data/output/weights-'+seed_model))
+model.train()
 
 class Descriminator(nn.Module):
   def __init__(self, config):
@@ -270,8 +270,8 @@ class Descriminator(nn.Module):
     return logits
 
 descrim = Descriminator(copy.deepcopy(configuration))
-#descrim.load_state_dict(torch.load('data/output/descrim-weights-'+seed_model))
-#descrim.train()
+descrim.load_state_dict(torch.load('data/output/descrim-weights-'+seed_model))
+descrim.train()
 
 # sents = (['Hello, this is a test'], ['[EN]'])
 
