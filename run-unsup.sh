@@ -15,5 +15,10 @@ export OMP_NUM_THREADS=$SLURM_CPUS_ON_NODE
 source /fslhome/pipoika3/anaconda3/etc/profile.d/conda.sh
 conda activate unsup
 
-python3 unsup.py
+export JOB_ID=$SLURM_JOB_ID
+export BASE_NAME="Sorenson-5000"
+export SEED_ID="none"
+export SEED_BASE="none"
+python3 tokenizer.py $BASE_NAME
+python3 unsup.py $BASE_NAME $SEED_ID $SEED_BASE
 

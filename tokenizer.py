@@ -4,8 +4,9 @@ from tokenizers.trainers import BpeTrainer, WordPieceTrainer
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.processors import TemplateProcessing
 from transformers import BartTokenizer
+import sys
 
-corename = 'OPUS'
+corename = sys.argv[1]
 
 tokenizer = Tokenizer(WordPiece())
 
